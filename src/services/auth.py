@@ -12,6 +12,8 @@ from src.database.db import get_db
 from src.conf.config import settings
 from src.services.users import UserService
 
+import redis
+
 
 class Hash:
     pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -62,6 +64,9 @@ async def get_email_from_token(token: str):
         )
 
 
+r = redis.Redis(host="localhost", port=8000, password=None)
+
+
 async def get_current_user(
     token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)
 ):
@@ -70,7 +75,6 @@ async def get_current_user(
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
-
     try:
         # Decode JWT
         payload = jwt.decode(
@@ -81,8 +85,12 @@ async def get_current_user(
             raise credentials_exception
     except JWTError as e:
         raise credentials_exception
-    user_service = UserService(db)
-    user = await user_service.get_user_by_username(username)
+    user = r.get("current_user")
     if user is None:
-        raise credentials_exception
+        user_service = UserService(db)
+        user = await user_service.get_user_by_username(username)
+        if user is None:
+            raise credentials_exception
+        await r.set("current_user", user)
+        await r.expire("current_user", 3600)
     return user
